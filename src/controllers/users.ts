@@ -3,6 +3,7 @@ import { prisma } from "../lib/db";
 import { generateToken, generateOTPToken, verifyOTPToken, AuthRequest } from "../middleware/auth";
 import { ErrorResponse } from "../utils/errorResponse";
 import { generateOTP } from "../utils/otp";
+import { sendOTPViaTwilio } from "../services/twilio";
 
 // Step 1: Register - Send OTP to mobile number
 export const registerUser = async (
@@ -48,8 +49,7 @@ export const registerUser = async (
     // Generate OTP JWT token (5 minutes expiry)
     const otpToken = generateOTPToken(user.id, mobileNo, otp, "registration");
 
-    // TODO: Send OTP via SMS service here
-    console.log(`OTP for ${mobileNo}: ${otp}`); // For testing purposes
+    const smsResult = await sendOTPViaTwilio(mobileNo, otp, "registration");
 
     return res.status(201).json({
       success: true,
@@ -59,6 +59,8 @@ export const registerUser = async (
         userId: user.id,
         mobileNo: user.mobileNo,
         username: user.username,
+        delivery: smsResult.delivery,
+        messageSid: smsResult.sid,
         // In development, return OTP for testing (remove in production)
         otp: process.env.NODE_ENV === "development" ? otp : undefined,
       },
@@ -153,8 +155,7 @@ export const loginUser = async (
     // Generate OTP JWT token (5 minutes expiry)
     const otpToken = generateOTPToken(user.id, mobileNo, otp, "login");
 
-    // TODO: Send OTP via SMS service here
-    console.log(`OTP for ${mobileNo}: ${otp}`); // For testing purposes
+    const smsResult = await sendOTPViaTwilio(mobileNo, otp, "login");
 
     return res.status(200).json({
       success: true,
@@ -164,6 +165,8 @@ export const loginUser = async (
         userId: user.id,
         mobileNo: user.mobileNo,
         username: user.username,
+        delivery: smsResult.delivery,
+        messageSid: smsResult.sid,
         // In development, return OTP for testing (remove in production)
         otp: process.env.NODE_ENV === "development" ? otp : undefined,
       },
