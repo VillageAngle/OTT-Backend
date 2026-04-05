@@ -1,57 +1,128 @@
 import { Response, NextFunction } from "express";
-import bcrypt from "bcryptjs";
 import { prisma } from "../lib/db";
 import { generateToken, AuthRequest } from "../middleware/auth";
 import { ErrorResponse } from "../utils/errorResponse";
+import { generateOTP, getOTPExpiry, isOTPValid } from "../utils/otp";
 
-// Register a new user
+// Step 1: Register - Send OTP to mobile number
 export const registerUser = async (
   req: AuthRequest,
   res: Response,
   next: NextFunction
 ) => {
   try {
-    const { email, username, password } = req.body;
+    const { mobileNo, username } = req.body;
 
-    if (!email || !username || !password) {
-      throw new ErrorResponse("Email, username, and password are required", 400);
+    if (!mobileNo || !username) {
+      throw new ErrorResponse("Mobile number and username are required", 400);
+    }
+
+    // Validate mobile number format (basic validation)
+    if (!/^\d{10}$/.test(mobileNo)) {
+      throw new ErrorResponse("Mobile number must be 10 digits", 400);
     }
 
     // Check if user already exists
     const existingUser = await prisma.user.findFirst({
       where: {
-        OR: [{ email }, { username }],
+        OR: [{ mobileNo }, { username }],
       },
     });
 
     if (existingUser) {
-      throw new ErrorResponse("User with this email or username already exists", 400);
+      throw new ErrorResponse("User with this mobile number or username already exists", 400);
     }
 
-    // Hash password
-    const hashedPassword = await bcrypt.hash(password, 10);
+    // Generate OTP
+    const otp = generateOTP();
+    const otpExpiry = getOTPExpiry();
 
-    // Create user
+    // Create user with OTP
     const user = await prisma.user.create({
       data: {
-        email,
+        mobileNo,
         username,
-        password: hashedPassword,
+        otp,
+        otpExpiry,
+        isVerified: false,
+      },
+    });
+
+    // TODO: Send OTP via SMS service here
+    console.log(`OTP for ${mobileNo}: ${otp}`); // For testing purposes
+
+    return res.status(201).json({
+      success: true,
+      message: "OTP sent to your mobile number",
+      data: {
+        userId: user.id,
+        mobileNo: user.mobileNo,
+        username: user.username,
+        // In development, you can return OTP for testing
+        otp: process.env.NODE_ENV === "development" ? otp : undefined,
+      },
+    });
+  } catch (error) {
+    return next(
+      error instanceof ErrorResponse ? error : new ErrorResponse((error as any).message, 500)
+    );
+  }
+};
+
+// Step 2: Verify OTP for registration
+export const verifyRegistrationOTP = async (
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const { userId, otp } = req.body;
+
+    if (!userId || !otp) {
+      throw new ErrorResponse("User ID and OTP are required", 400);
+    }
+
+    // Find user
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+    });
+
+    if (!user) {
+      throw new ErrorResponse("User not found", 404);
+    }
+
+    // Check if OTP is valid
+    if (!isOTPValid(user.otp, user.otpExpiry)) {
+      throw new ErrorResponse("OTP has expired or is invalid", 401);
+    }
+
+    // Verify OTP
+    if (user.otp !== otp) {
+      throw new ErrorResponse("Invalid OTP", 401);
+    }
+
+    // Update user as verified
+    const verifiedUser = await prisma.user.update({
+      where: { id: userId },
+      data: {
+        isVerified: true,
+        otp: null,
+        otpExpiry: null,
       },
     });
 
     // Generate JWT token
-    const token = generateToken(user.id, user.email, user.username);
+    const token = generateToken(verifiedUser.id, verifiedUser.mobileNo, verifiedUser.username);
 
-    return res.status(201).json({
+    return res.status(200).json({
       success: true,
-      message: "User registered successfully",
+      message: "Registration completed successfully",
       data: {
         token,
         user: {
-          id: user.id,
-          email: user.email,
-          username: user.username,
+          id: verifiedUser.id,
+          mobileNo: verifiedUser.mobileNo,
+          username: verifiedUser.username,
         },
       },
     });
@@ -62,37 +133,105 @@ export const registerUser = async (
   }
 };
 
-// Login user
+// Step 1: Login - Send OTP to mobile number
 export const loginUser = async (
   req: AuthRequest,
   res: Response,
   next: NextFunction
 ) => {
   try {
-    const { email, password } = req.body;
+    const { mobileNo } = req.body;
 
-    if (!email || !password) {
-      throw new ErrorResponse("Email and password are required", 400);
+    if (!mobileNo) {
+      throw new ErrorResponse("Mobile number is required", 400);
     }
 
     // Find user
     const user = await prisma.user.findUnique({
-      where: { email },
+      where: { mobileNo },
     });
 
     if (!user) {
-      throw new ErrorResponse("Invalid credentials", 401);
+      throw new ErrorResponse("User not found", 404);
     }
 
-    // Check password
-    const isPasswordValid = await bcrypt.compare(password, user.password);
+    // Generate OTP
+    const otp = generateOTP();
+    const otpExpiry = getOTPExpiry();
 
-    if (!isPasswordValid) {
-      throw new ErrorResponse("Invalid credentials", 401);
+    // Update user with OTP
+    const updatedUser = await prisma.user.update({
+      where: { id: user.id },
+      data: {
+        otp,
+        otpExpiry,
+      },
+    });
+
+    // TODO: Send OTP via SMS service here
+    console.log(`OTP for ${mobileNo}: ${otp}`); // For testing purposes
+
+    return res.status(200).json({
+      success: true,
+      message: "OTP sent to your mobile number",
+      data: {
+        userId: updatedUser.id,
+        mobileNo: updatedUser.mobileNo,
+        username: updatedUser.username,
+        // In development, you can return OTP for testing
+        otp: process.env.NODE_ENV === "development" ? otp : undefined,
+      },
+    });
+  } catch (error) {
+    return next(
+      error instanceof ErrorResponse ? error : new ErrorResponse((error as any).message, 500)
+    );
+  }
+};
+
+// Step 2: Verify OTP for login
+export const verifyLoginOTP = async (
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const { userId, otp } = req.body;
+
+    if (!userId || !otp) {
+      throw new ErrorResponse("User ID and OTP are required", 400);
     }
+
+    // Find user
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+    });
+
+    if (!user) {
+      throw new ErrorResponse("User not found", 404);
+    }
+
+    // Check if OTP is valid
+    if (!isOTPValid(user.otp, user.otpExpiry)) {
+      throw new ErrorResponse("OTP has expired or is invalid", 401);
+    }
+
+    // Verify OTP
+    if (user.otp !== otp) {
+      throw new ErrorResponse("Invalid OTP", 401);
+    }
+
+    // Clear OTP
+    const loginUser = await prisma.user.update({
+      where: { id: userId },
+      data: {
+        otp: null,
+        otpExpiry: null,
+      },
+    });
 
     // Generate JWT token
-    const token = generateToken(user.id, user.email, user.username);
+    const token = generateToken(loginUser.id, loginUser.mobileNo, loginUser.username);
 
     return res.status(200).json({
       success: true,
@@ -100,9 +239,9 @@ export const loginUser = async (
       data: {
         token,
         user: {
-          id: user.id,
-          email: user.email,
-          username: user.username,
+          id: loginUser.id,
+          mobileNo: loginUser.mobileNo,
+          username: loginUser.username,
         },
       },
     });
@@ -124,15 +263,20 @@ export const getUserProfile = async (
       where: { id: req.user!.id },
       select: {
         id: true,
-        email: true,
+        mobileNo: true,
         username: true,
+        isVerified: true,
         createdAt: true,
+        updatedAt: true,
       },
     });
 
+    if (!user) {
+      throw new ErrorResponse("User not found", 404);
+    }
+
     return res.status(200).json({
       success: true,
-      message: "User profile retrieved successfully",
       data: user,
     });
   } catch (error) {

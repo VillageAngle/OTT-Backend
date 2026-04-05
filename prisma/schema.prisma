@@ -14,9 +14,11 @@ datasource db {
 // User model for authentication and watch history tracking
 model User {
   id                String   @id @default(cuid())
-  email             String   @unique
-  password          String
+  mobileNo          String   @unique
   username          String   @unique
+  otp               String?
+  otpExpiry         DateTime?
+  isVerified        Boolean  @default(false)
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
   
@@ -24,7 +26,7 @@ model User {
   watchHistory      WatchHistory[]
   streamTokens      StreamToken[]
   
-  @@index([email])
+  @@index([mobileNo])
 }
 
 // Channel model for managing admin channels that can upload content

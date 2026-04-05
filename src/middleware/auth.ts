@@ -6,7 +6,7 @@ const JWT_SECRET = process.env.JWT_SECRET || "your-secret-key-change-in-producti
 export interface AuthRequest extends Request {
   user?: {
     id: string;
-    email: string;
+    mobileNo: string;
     username: string;
   };
 }
@@ -29,6 +29,6 @@ export const verifyToken = (req: AuthRequest, res: Response, next: NextFunction)
 };
 
 // Utility function to generate JWT token
-export const generateToken = (userId: string, email: string, username: string): string => {
-  return jwt.sign({ id: userId, email, username }, JWT_SECRET, { expiresIn: "24h" });
+export const generateToken = (userId: string, mobileNo: string, username: string): string => {
+  return jwt.sign({ id: userId, mobileNo, username }, JWT_SECRET, { expiresIn: "24h" });
 };
