@@ -1,0 +1,162 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Get a free hosted Postgres database in seconds: `npx create-db`
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// User model for authentication and watch history tracking
+model User {
+  id                String   @id @default(cuid())
+  email             String   @unique
+  password          String
+  username          String   @unique
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  
+  // Relations
+  watchHistory      WatchHistory[]
+  streamTokens      StreamToken[]
+  
+  @@index([email])
+}
+
+// Channel model for managing admin channels that can upload content
+model Channel {
+  id                String   @id @default(cuid())
+  name              String   @unique
+  description       String?
+  bannerUrl         String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  
+  // Relations
+  videos            Video[]
+  liveStreams       LiveStream[]
+  analytics         ChannelAnalytics?
+  
+  @@index([name])
+}
+
+// Video model for VOD (Video-On-Demand) content
+model Video {
+  id                String   @id @default(cuid())
+  title             String
+  description       String?
+  duration          Int      // Duration in seconds
+  fileUrl           String   // Path to HLS manifest or video file
+  thumbnailUrl      String?
+  status            VideoStatus @default(ACTIVE)  // ACTIVE, PROCESSING, ARCHIVED
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  
+  // Foreign Keys
+  channelId         String
+  channel           Channel @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  
+  // Relations
+  watchHistory      WatchHistory[]
+  streamTokens      StreamToken[]
+  
+  @@index([channelId])
+}
+
+enum VideoStatus {
+  ACTIVE
+  PROCESSING
+  ARCHIVED
+}
+
+// LiveStream model for real-time streaming via RTMP
+model LiveStream {
+  id                String   @id @default(cuid())
+  title             String
+  description       String?
+  rtmpUrl           String
+  rtmpKey           String   // Unique RTMP key for the stream
+  status            LiveStreamStatus @default(OFFLINE)  // OFFLINE, LIVE, SCHEDULED
+  viewerCount       Int      @default(0)
+  startedAt         DateTime?
+  endedAt           DateTime?
+  recordingUrl      String?  // URL of recorded stream (for VOD conversion)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  
+  // Foreign Keys
+  channelId         String
+  channel           Channel @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  
+  // Relations
+  streamTokens      StreamToken[]
+  
+  @@index([channelId])
+  @@index([status])
+}
+
+enum LiveStreamStatus {
+  OFFLINE
+  SCHEDULED
+  LIVE
+  ENDED
+}
+
+// WatchHistory model to track user progress and watch time
+model WatchHistory {
+  id                String   @id @default(cuid())
+  lastWatchedAt     DateTime @default(now()) @updatedAt
+  watchDuration     Int      @default(0)  // Seconds watched
+  totalDuration     Int      @default(0)  // Total video duration
+  progress          Float    @default(0)  // Percentage watched (0-100)
+  isCompleted       Boolean  @default(false)
+  
+  // Foreign Keys
+  userId            String
+  user              User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  videoId           String
+  video             Video @relation(fields: [videoId], references: [id], onDelete: Cascade)
+  
+  @@unique([userId, videoId])
+  @@index([userId])
+  @@index([videoId])
+}
+
+// StreamToken model for secure, token-based access to streams
+model StreamToken {
+  id                String   @id @default(cuid())
+  token             String   @unique
+  expiresAt         DateTime
+  createdAt         DateTime @default(now())
+  
+  // Foreign Keys - either video or livestream
+  userId            String
+  user              User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  videoId           String?
+  video             Video? @relation(fields: [videoId], references: [id], onDelete: SetNull)
+  liveStreamId      String?
+  liveStream        LiveStream? @relation(fields: [liveStreamId], references: [id], onDelete: SetNull)
+  
+  @@index([token])
+  @@index([userId])
+  @@index([videoId])
+  @@index([liveStreamId])
+}
+
+// ChannelAnalytics model to track views and watch time per channel
+model ChannelAnalytics {
+  id                String   @id @default(cuid())
+  totalViews        Int      @default(0)
+  totalWatchTime    Int      @default(0)  // In seconds
+  subscriberCount   Int      @default(0)
+  updatedAt         DateTime @updatedAt
+  
+  // Foreign Keys
+  channelId         String   @unique
+  channel           Channel @relation(fields: [channelId], references: [id], onDelete: Cascade)
+}

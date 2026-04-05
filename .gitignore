@@ -130,3 +130,4 @@ ssl/
 swark-output/
 
 *.json
+/src/generated/prisma
