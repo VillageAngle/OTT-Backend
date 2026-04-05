@@ -1,8 +1,8 @@
 import { Response, NextFunction } from "express";
 import { prisma } from "../lib/db";
-import { generateToken, AuthRequest } from "../middleware/auth";
+import { generateToken, generateOTPToken, verifyOTPToken, AuthRequest } from "../middleware/auth";
 import { ErrorResponse } from "../utils/errorResponse";
-import { generateOTP, getOTPExpiry, isOTPValid } from "../utils/otp";
+import { generateOTP } from "../utils/otp";
 
 // Step 1: Register - Send OTP to mobile number
 export const registerUser = async (
@@ -33,20 +33,20 @@ export const registerUser = async (
       throw new ErrorResponse("User with this mobile number or username already exists", 400);
     }
 
-    // Generate OTP
-    const otp = generateOTP();
-    const otpExpiry = getOTPExpiry();
-
-    // Create user with OTP
+    // Create user (unverified)
     const user = await prisma.user.create({
       data: {
         mobileNo,
         username,
-        otp,
-        otpExpiry,
         isVerified: false,
       },
     });
+
+    // Generate OTP
+    const otp = generateOTP();
+
+    // Generate OTP JWT token (5 minutes expiry)
+    const otpToken = generateOTPToken(user.id, mobileNo, otp, "registration");
 
     // TODO: Send OTP via SMS service here
     console.log(`OTP for ${mobileNo}: ${otp}`); // For testing purposes
@@ -55,10 +55,11 @@ export const registerUser = async (
       success: true,
       message: "OTP sent to your mobile number",
       data: {
+        otpToken, // This token is used for verification
         userId: user.id,
         mobileNo: user.mobileNo,
         username: user.username,
-        // In development, you can return OTP for testing
+        // In development, return OTP for testing (remove in production)
         otp: process.env.NODE_ENV === "development" ? otp : undefined,
       },
     });
@@ -76,42 +77,33 @@ export const verifyRegistrationOTP = async (
   next: NextFunction
 ) => {
   try {
-    const { userId, otp } = req.body;
+    const { otpToken, otp } = req.body;
 
-    if (!userId || !otp) {
-      throw new ErrorResponse("User ID and OTP are required", 400);
+    if (!otpToken || !otp) {
+      throw new ErrorResponse("OTP token and OTP are required", 400);
     }
 
-    // Find user
-    const user = await prisma.user.findUnique({
-      where: { id: userId },
-    });
+    // Verify OTP token
+    const payload = verifyOTPToken(otpToken);
 
-    if (!user) {
-      throw new ErrorResponse("User not found", 404);
+    if (!payload) {
+      throw new ErrorResponse("OTP token has expired or is invalid", 401);
     }
 
-    // Check if OTP is valid
-    if (!isOTPValid(user.otp, user.otpExpiry)) {
-      throw new ErrorResponse("OTP has expired or is invalid", 401);
-    }
-
-    // Verify OTP
-    if (user.otp !== otp) {
+    // Verify OTP matches
+    if (payload.otp !== otp || payload.type !== "registration") {
       throw new ErrorResponse("Invalid OTP", 401);
     }
 
     // Update user as verified
     const verifiedUser = await prisma.user.update({
-      where: { id: userId },
+      where: { id: payload.userId },
       data: {
         isVerified: true,
-        otp: null,
-        otpExpiry: null,
       },
     });
 
-    // Generate JWT token
+    // Generate auth JWT token
     const token = generateToken(verifiedUser.id, verifiedUser.mobileNo, verifiedUser.username);
 
     return res.status(200).json({
@@ -157,16 +149,9 @@ export const loginUser = async (
 
     // Generate OTP
     const otp = generateOTP();
-    const otpExpiry = getOTPExpiry();
 
-    // Update user with OTP
-    const updatedUser = await prisma.user.update({
-      where: { id: user.id },
-      data: {
-        otp,
-        otpExpiry,
-      },
-    });
+    // Generate OTP JWT token (5 minutes expiry)
+    const otpToken = generateOTPToken(user.id, mobileNo, otp, "login");
 
     // TODO: Send OTP via SMS service here
     console.log(`OTP for ${mobileNo}: ${otp}`); // For testing purposes
@@ -175,10 +160,11 @@ export const loginUser = async (
       success: true,
       message: "OTP sent to your mobile number",
       data: {
-        userId: updatedUser.id,
-        mobileNo: updatedUser.mobileNo,
-        username: updatedUser.username,
-        // In development, you can return OTP for testing
+        otpToken, // This token is used for verification
+        userId: user.id,
+        mobileNo: user.mobileNo,
+        username: user.username,
+        // In development, return OTP for testing (remove in production)
         otp: process.env.NODE_ENV === "development" ? otp : undefined,
       },
     });
@@ -196,42 +182,35 @@ export const verifyLoginOTP = async (
   next: NextFunction
 ) => {
   try {
-    const { userId, otp } = req.body;
+    const { otpToken, otp } = req.body;
 
-    if (!userId || !otp) {
-      throw new ErrorResponse("User ID and OTP are required", 400);
+    if (!otpToken || !otp) {
+      throw new ErrorResponse("OTP token and OTP are required", 400);
     }
 
-    // Find user
+    // Verify OTP token
+    const payload = verifyOTPToken(otpToken);
+
+    if (!payload) {
+      throw new ErrorResponse("OTP token has expired or is invalid", 401);
+    }
+
+    // Verify OTP matches
+    if (payload.otp !== otp || payload.type !== "login") {
+      throw new ErrorResponse("Invalid OTP", 401);
+    }
+
+    // Get user
     const user = await prisma.user.findUnique({
-      where: { id: userId },
+      where: { id: payload.userId },
     });
 
     if (!user) {
       throw new ErrorResponse("User not found", 404);
     }
 
-    // Check if OTP is valid
-    if (!isOTPValid(user.otp, user.otpExpiry)) {
-      throw new ErrorResponse("OTP has expired or is invalid", 401);
-    }
-
-    // Verify OTP
-    if (user.otp !== otp) {
-      throw new ErrorResponse("Invalid OTP", 401);
-    }
-
-    // Clear OTP
-    const loginUser = await prisma.user.update({
-      where: { id: userId },
-      data: {
-        otp: null,
-        otpExpiry: null,
-      },
-    });
-
-    // Generate JWT token
-    const token = generateToken(loginUser.id, loginUser.mobileNo, loginUser.username);
+    // Generate auth JWT token
+    const token = generateToken(user.id, user.mobileNo, user.username);
 
     return res.status(200).json({
       success: true,
@@ -239,9 +218,9 @@ export const verifyLoginOTP = async (
       data: {
         token,
         user: {
-          id: loginUser.id,
-          mobileNo: loginUser.mobileNo,
-          username: loginUser.username,
+          id: user.id,
+          mobileNo: user.mobileNo,
+          username: user.username,
         },
       },
     });

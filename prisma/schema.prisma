@@ -16,8 +16,6 @@ model User {
   id                String   @id @default(cuid())
   mobileNo          String   @unique
   username          String   @unique
-  otp               String?
-  otpExpiry         DateTime?
   isVerified        Boolean  @default(false)
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
