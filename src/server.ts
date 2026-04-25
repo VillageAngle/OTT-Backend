@@ -8,6 +8,7 @@ import { errorHandler } from "./middleware/errorHandler";
 import userRoutes from "./routes/users";
 import channelsRoutes from "./routes/channels";
 import videosRoutes from "./routes/videos";
+import videoStreamRoutes from "./routes/videoStream";
 import liveStreamsRoutes from "./routes/livestreams";
 import watchHistoryRoutes from "./routes/watchHistory";
 import streamTokensRoutes from "./routes/streamTokens";
@@ -33,6 +34,7 @@ app.get("/health", (req: Request, res: Response) => {
 app.use("/api/users", userRoutes);
 app.use("/api/channels", channelsRoutes);
 app.use("/api/videos", videosRoutes);
+app.use("/api/video-stream", videoStreamRoutes);
 app.use("/api/live-streams", liveStreamsRoutes);
 app.use("/api/watch-history", watchHistoryRoutes);
 app.use("/api/stream-tokens", streamTokensRoutes);
