@@ -205,6 +205,210 @@ Authorization: Bearer <JWT_TOKEN>
 
 ---
 
+## 4.7 Video Streaming with HTTP Range Requests
+Chunked video streaming for smooth, lag-free playback with adaptive buffering.
+
+### 4.7.1 Stream Full Video (No Range Header)
+- [ ] GET request without Range header returns full video
+- [ ] Response status is 200 OK
+- [ ] Content-Type is video/mp4
+- [ ] Accept-Ranges header is present
+- [ ] Content-Length equals file size
+- [ ] Video plays without stuttering
+
+**Endpoint**: `GET /api/video-stream/:id/stream`
+
+**Expected Response Headers**:
+```
+HTTP/1.1 200 OK
+Content-Type: video/mp4
+Content-Length: 104857600
+Accept-Ranges: bytes
+Cache-Control: public, max-age=86400
+```
+
+### 4.7.2 Stream Video with Range Header (First Chunk)
+- [ ] GET request with Range header returns partial content
+- [ ] Response status is 206 Partial Content
+- [ ] Content-Range header shows byte range (e.g., bytes 0-262143/104857600)
+- [ ] Content-Length matches requested range size
+- [ ] Server returns exactly requested bytes
+- [ ] Adaptive chunk size matches network speed
+
+**Endpoint**: `GET /api/video-stream/:id/stream`
+
+**Request Headers**:
+```
+Range: bytes=0-262143
+```
+
+**Expected Response Headers**:
+```
+HTTP/1.1 206 Partial Content
+Content-Type: video/mp4
+Content-Length: 262144
+Content-Range: bytes 0-262143/104857600
+Accept-Ranges: bytes
+```
+
+### 4.7.3 Stream Video - Resume from Middle (Seeking)
+- [ ] GET request with Range for middle of video
+- [ ] Response status is 206 Partial Content
+- [ ] Seek time is < 100ms (instant)
+- [ ] Content-Range shows correct offset
+- [ ] Video plays smoothly from seek position
+- [ ] No buffering delay
+
+**Endpoint**: `GET /api/video-stream/:id/stream`
+
+**Request Headers**:
+```
+Range: bytes=50000000-50262143
+```
+
+**Expected Response**:
+- Status: 206 Partial Content
+- Content-Range: bytes 50000000-50262143/104857600
+- Seek latency: < 100ms
+
+### 4.7.4 Stream Video - Last Chunk (Suffix-Range)
+- [ ] GET request with suffix Range (bytes=-1048576)
+- [ ] Gets last 1MB without knowing file size
+- [ ] Response status is 206 Partial Content
+- [ ] Content-Range calculated correctly
+- [ ] Useful for testing seek-to-end functionality
+
+**Endpoint**: `GET /api/video-stream/:id/stream`
+
+**Request Headers**:
+```
+Range: bytes=-1048576
+```
+
+**Expected Response**:
+- Status: 206 Partial Content
+- Content-Range: bytes CALCULATED_START-TOTAL/TOTAL
+
+### 4.7.5 Stream Video - Custom Range
+- [ ] GET request with arbitrary byte range
+- [ ] Server returns exact range requested
+- [ ] Multiple sequential ranges work smoothly
+- [ ] Backpressure prevents memory spikes
+- [ ] No stuttering with rapid range requests
+
+**Endpoint**: `GET /api/video-stream/:id/stream`
+
+**Test Cases**:
+```
+Range: bytes=2097152-5242879      (2-5MB)
+Range: bytes=10485760-            (from 10MB to end)
+Range: bytes=0-262143             (first chunk)
+Range: bytes=262144-524287        (second chunk)
+```
+
+### 4.7.6 Get Stream Info (Metadata Endpoint)
+- [ ] GET request returns video metadata without downloading
+- [ ] Response includes file size in bytes
+- [ ] Response includes adaptive chunk size based on network
+- [ ] Response includes estimated bandwidth
+- [ ] Response includes streaming support flags
+- [ ] Response time < 50ms (metadata cached)
+- [ ] No video bytes transferred
+
+**Endpoint**: `GET /api/video-stream/:id/stream-info`
+
+**Expected Response**:
+```json
+{
+  "success": true,
+  "data": {
+    "video": {
+      "id": "...",
+      "title": "...",
+      "duration": 3600
+    },
+    "streaming": {
+      "fileSize": 104857600,
+      "contentType": "video/mp4",
+      "adaptiveChunkSize": 262144,
+      "supportRange": true,
+      "maxConcurrentStreams": 3,
+      "estimatedBandwidth": 625000
+    }
+  }
+}
+```
+
+### 4.7.7 Streaming Service Health Check
+- [ ] GET request returns service status
+- [ ] Shows number of active concurrent streams
+- [ ] Shows streaming configuration
+- [ ] Response time < 50ms
+- [ ] Can be called frequently for monitoring
+
+**Endpoint**: `GET /api/video-stream/health/status`
+
+**Expected Response**:
+```json
+{
+  "success": true,
+  "data": {
+    "status": "healthy",
+    "activeStreams": 12,
+    "timestamp": "2026-04-25T10:30:00Z",
+    "config": {
+      "defaultChunkSize": 262144,
+      "maxChunkSize": 1048576,
+      "socketTimeout": 60000
+    }
+  }
+}
+```
+
+### 4.7.8 Invalid Range Handling
+- [ ] Invalid Range format returns 400 Bad Request
+- [ ] Range beyond file size returns 416 Range Not Satisfiable
+- [ ] Negative ranges handled correctly
+- [ ] Non-numeric ranges rejected
+- [ ] Proper error messages in response
+
+**Test Cases**:
+```
+Range: bytes=invalid              (malformed)
+Range: bytes=0-999999999999       (beyond file size)
+Range: invalid-format             (wrong format)
+```
+
+### 4.7.9 Rate Limiting - Max Concurrent Streams
+- [ ] User can open up to 3 concurrent streams
+- [ ] 4th concurrent stream returns 429 Too Many Requests
+- [ ] Error message: "Too many concurrent streams"
+- [ ] After stream closes, new stream allowed
+- [ ] Prevents resource exhaustion
+
+**Test**:
+```
+Open 3 streams simultaneously → All succeed
+Open 4th stream → 429 error
+Close one stream → New stream allowed
+```
+
+### 4.7.10 Adaptive Buffering Performance
+- [ ] Desktop network (5 Mbps): chunk size ~625 KB
+- [ ] Mobile network (2.5 Mbps): chunk size ~312 KB
+- [ ] Fast network (10+ Mbps): chunk size ~1 MB
+- [ ] No jitter or stuttering during playback
+- [ ] Buffer maintained at ~1 second of video
+- [ ] Smooth transitions between chunks
+
+**Expected Behavior**:
+- Network detected from User-Agent
+- Chunk size calculated: bandwidth × 1 second
+- Consistent response times per chunk
+- No CPU spikes during streaming
+
+---
+
 ## 5. Live Stream Management Testing
 
 ### 5.1 Create Live Stream
@@ -489,6 +693,34 @@ All successful responses should follow:
 - [ ] Monitor slow queries
 - [ ] Check N+1 query problems
 
+### 11.4 Video Streaming Performance
+- [ ] Stream info endpoint: < 50ms (metadata cached)
+- [ ] First byte of video stream: < 200ms
+- [ ] Subsequent chunks: < 100ms each
+- [ ] Seek time (range requests): < 100ms
+- [ ] No latency increase with concurrent streams
+
+### 11.5 Concurrent Streaming Load
+- [ ] 10 concurrent video streams: CPU < 15%, Memory < 300MB
+- [ ] 50 concurrent streams: CPU < 40%, Memory < 1GB
+- [ ] 100 concurrent streams: CPU < 60%, Memory < 1.5GB
+- [ ] Max concurrent streams enforced (3 per user)
+- [ ] Active stream count accurate in health check
+
+### 11.6 Memory Usage During Streaming
+- [ ] Memory per stream: 10-20 MB (not 500MB+)
+- [ ] Memory stable after buffer fills
+- [ ] No memory leaks with long-duration streams
+- [ ] Backpressure prevents buffer overflow
+- [ ] Garbage collection effective
+
+### 11.7 Bandwidth Efficiency
+- [ ] Full video streaming: uses 100% of file size
+- [ ] Range requests: use only requested bytes
+- [ ] Partial watches: save 50-70% bandwidth
+- [ ] Metadata cached: reduces S3 API calls by 50-80%
+- [ ] Seek operations: < 5KB overhead per seek
+
 ---
 
 ## 12. Security Testing
@@ -514,6 +746,26 @@ All successful responses should follow:
 - [ ] Sensitive data not logged
 - [ ] Error messages don't leak info
 - [ ] User data isolation verified
+
+---
+
+## 12.5 Streaming Security (New)
+- [ ] Rate limiting: max 3 concurrent streams per user
+- [ ] 4th stream attempt returns 429 Too Many Requests
+- [ ] Invalid Range headers rejected with 400
+- [ ] Out-of-bounds ranges rejected with 416
+- [ ] Malformed byte ranges detected and rejected
+- [ ] Socket timeout after 60 seconds prevents resource leak
+- [ ] No buffer overflow vulnerabilities possible
+- [ ] Proper CORS headers for Range requests
+- [ ] No sensitive data in streaming response headers
+
+### 12.6 Streaming Error Security
+- [ ] 400 Bad Request for invalid Range format
+- [ ] 416 Range Not Satisfiable for out-of-bounds
+- [ ] 429 Too Many Requests for rate limit exceeded
+- [ ] 500 Server Error without exposing internals
+- [ ] Proper error messages without S3 bucket info
 
 ---
 
@@ -565,6 +817,313 @@ After each code change:
 - [ ] Verify existing endpoints still work
 - [ ] Check error handling unchanged
 - [ ] Validate database state
+
+---
+
+## 16. Browser-Based Streaming Tests (New)
+
+### 16.1 HTML5 Video Player Integration
+- [ ] Video tag loads stream endpoint correctly
+- [ ] Video controls appear (play, pause, seek, volume)
+- [ ] Browser automatically sends Range headers
+- [ ] Seeking works instantly (< 100ms)
+- [ ] Progress bar reflects actual playback position
+- [ ] Time display shows correct duration and current time
+- [ ] No manual Range header configuration needed
+
+**Test Process**:
+```html
+<video controls>
+  <source src="/api/video-stream/VIDEO_ID/stream" type="video/mp4">
+</video>
+```
+
+1. Verify video loads
+2. Open browser DevTools Network tab
+3. Play video and monitor Range headers
+4. Seek to different positions
+5. Verify 206 responses for each seek
+
+### 16.2 Cross-Browser Compatibility
+- [ ] Chrome 90+: Full support, Range requests working
+- [ ] Firefox 88+: Full support, Range requests working
+- [ ] Safari 14+: Full support, Range requests working
+- [ ] Edge 90+: Full support, Range requests working
+- [ ] Mobile Chrome: Adaptive buffering effective
+- [ ] Mobile Safari: Adaptive buffering effective
+
+### 16.3 Mobile Streaming Testing
+- [ ] Mobile on 3G: Uses smaller chunks (312KB), buffers appropriately
+- [ ] Mobile on 4G: Uses medium chunks (625KB), faster buffering
+- [ ] Mobile on WiFi: Uses larger chunks efficiently
+- [ ] Network switch during playback: Adapts chunk size gracefully
+- [ ] Low bandwidth: No stuttering with adaptive buffering
+
+### 16.4 Desktop Streaming Testing
+- [ ] Desktop on Fiber: Uses max chunk size (1MB), instant buffering
+- [ ] Desktop on WiFi: Uses large chunks, smooth playback
+- [ ] Desktop on Ethernet: Uses optimal chunk size
+- [ ] Multiple tabs streaming: All play without interference
+- [ ] Bandwidth changes: Playback quality adjusts smoothly
+
+### 16.5 Player Controls Testing
+- [ ] Play/pause toggles correctly
+- [ ] Seeking slider moves smoothly
+- [ ] Seeking updates video instantly
+- [ ] Volume slider adjusts playback volume
+- [ ] Fullscreen mode works seamlessly
+- [ ] Progress bar fills accurate to position
+- [ ] Duration display shows total video length
+- [ ] Buffering indicator shows during loading
+
+### 16.6 Adaptive Playback Quality
+- [ ] Network speed detected correctly
+- [ ] User-Agent parsed to determine device
+- [ ] Chunk size calculated accordingly:
+  - Mobile: bandwidth × 1 = chunk size
+  - Desktop: bandwidth × 1 = chunk size
+- [ ] Playback smooth throughout video
+- [ ] No quality drops if chunk timing is consistent
+- [ ] Buffer maintained at ~1 second of video
+
+---
+
+## 17. Detailed Integration Scenarios (New)
+
+### Scenario 1: Complete Streaming User Journey
+**Objective**: Test entire workflow from video discovery to playback completion
+
+1. ✅ User registers and logs in
+2. ✅ Browse available channels
+3. ✅ View video list from channel
+4. ✅ Click video to view details
+5. ✅ Call `/api/video-stream/:id/stream-info` to get metadata
+6. ✅ Open HTML5 video player
+7. ✅ Watch video:
+   - Browser sends GET request (no Range)
+   - Server responds with 200 OK + full video
+   - Video plays smoothly
+8. ✅ Test seeking:
+   - Click to 25% mark
+   - Browser sends Range request to that position
+   - Server responds with 206 Partial Content
+   - Video plays from new position instantly
+9. ✅ Stop video at 50% mark
+10. ✅ Call `/api/watch-history` to save progress
+11. ✅ Close browser
+12. ✅ Reopen app and navigate to same video
+13. ✅ Verify resume position matches saved progress
+14. ✅ Complete video playback (reach 90%+)
+15. ✅ Verify video marked as completed
+
+**Expected Result**: Seamless streaming experience from start to finish
+
+### Scenario 2: Adaptive Network Conditions
+**Objective**: Verify streaming adapts to network speed changes
+
+1. ✅ Detect network speed (fast fiber)
+2. ✅ Get stream info → adaptive chunk size = 1MB
+3. ✅ Start streaming with 1MB chunks
+4. ✅ Monitor consistent response times (~100ms)
+5. ✅ Network degrades to 3G
+6. ✅ System detects new speed
+7. ✅ Adapt chunk size down to 312KB
+8. ✅ Playback continues smoothly without interruption
+9. ✅ No buffering or jitter during transition
+10. ✅ Network improves back to fiber
+11. ✅ Chunk size increases back to 1MB
+12. ✅ Streaming continues optimally
+
+**Expected Result**: Seamless quality adaptation to network
+
+### Scenario 3: Concurrent Streaming Limits
+**Objective**: Verify rate limiting prevents resource exhaustion
+
+1. ✅ User opens video stream 1 → Success (status 200/206)
+2. ✅ Check `/api/video-stream/health/status` → activeStreams: 1
+3. ✅ User opens video stream 2 → Success (status 200/206)
+4. ✅ Check health → activeStreams: 2
+5. ✅ User opens video stream 3 → Success (status 200/206)
+6. ✅ Check health → activeStreams: 3
+7. ✅ User attempts stream 4 → Fails with 429 Too Many Requests
+8. ✅ Error message: "Too many concurrent streams. Maximum 3 per user."
+9. ✅ User closes stream 1
+10. ✅ Check health → activeStreams: 2
+11. ✅ User opens new stream → Success (4th attempt now succeeds)
+12. ✅ Check health → activeStreams: 3
+
+**Expected Result**: Rate limiting enforced, prevents > 3 concurrent streams
+
+### Scenario 4: Seeking and Resume
+**Objective**: Test Range request seeking and resume capability
+
+1. ✅ Start streaming video (1GB file)
+2. ✅ Play for 10 seconds
+3. ✅ Seek to 50% mark (500MB mark)
+   - Browser sends: Range: bytes=524288000-524548863
+   - Server responds: 206 with Content-Range header
+   - Seek latency: < 100ms
+4. ✅ Continue playback from new position
+5. ✅ Play for another 10 seconds
+6. ✅ Simulate connection drop (pause network in DevTools)
+7. ✅ Wait 5 seconds (connection is down)
+8. ✅ Restore connection
+9. ✅ Calculate last received byte position
+10. ✅ Send Range request from that position
+11. ✅ Server resumes playback seamlessly
+12. ✅ No loss of data or position
+13. ✅ Continue to video completion
+
+**Expected Result**: Seamless seeking and resume on connection loss
+
+### Scenario 5: Performance Under Load
+**Objective**: Verify streaming performance with multiple concurrent users
+
+1. ✅ 10 concurrent users streaming
+   - Monitor CPU: < 15%
+   - Monitor Memory: < 300MB total
+   - Monitor response times: < 100ms per chunk
+2. ✅ 50 concurrent users streaming
+   - Monitor CPU: < 40%
+   - Monitor Memory: < 1GB total
+   - Monitor response times: < 100ms per chunk
+3. ✅ 100 concurrent users streaming
+   - Monitor CPU: < 60%
+   - Monitor Memory: < 1.5GB total
+   - Monitor response times: maintained at < 100ms
+4. ✅ All users can seek instantly
+5. ✅ No buffering delays
+6. ✅ No dropped connections
+7. ✅ Health check still responsive
+8. ✅ Gradually reduce load back to baseline
+9. ✅ Verify metrics return to normal
+
+**Expected Result**: System handles 100+ concurrent streams efficiently
+
+### Scenario 6: Error Handling
+**Objective**: Verify streaming error handling
+
+**Case A: Invalid Range Format**
+1. Send: `Range: invalid-format`
+2. Expected: 400 Bad Request
+3. Message: "Invalid range format"
+
+**Case B: Out of Bounds Range**
+1. Video size: 100MB
+2. Send: `Range: bytes=0-999999999`
+3. Expected: 416 Range Not Satisfiable
+
+**Case C: Non-existent Video**
+1. Send: GET `/api/video-stream/invalid-id/stream`
+2. Expected: 404 Not Found
+
+**Case D: Too Many Concurrent Streams**
+1. Open 4 streams
+2. Expected: 429 Too Many Requests
+3. Message: "Too many concurrent streams"
+
+**Case E: Connection Timeout**
+1. Start stream
+2. Wait > 60 seconds without activity
+3. Expected: Socket timeout + connection close
+
+---
+
+## 18. Postman Testing (Updated)
+
+### Updated Collection Structure
+- ✅ Authentication (5 endpoints)
+- ✅ Channels (5 endpoints)
+- ✅ Videos (6 endpoints)
+- ✅ **Video Streaming (7 NEW endpoints)**
+- ✅ Live Streams (6 endpoints)
+- ✅ Watch History (4 endpoints)
+- ✅ Stream Tokens (5 endpoints)
+
+**Total**: 30+ endpoints
+
+### Video Streaming Endpoints in Postman
+1. Stream Full Video
+2. Stream Video - First 1MB (Range)
+3. Stream Video - From Middle (Resume)
+4. Stream Video - Last 1MB (Seek to end)
+5. Stream Video - Custom Range
+6. Get Stream Info (Metadata)
+7. Streaming Service Health Check
+
+**File**: `OTT-API-Collection.postman_collection.json` (v2.0)
+**Guide**: `POSTMAN_TESTING_GUIDE.md`
+
+---
+
+## 19. Testing Execution Order
+
+### Phase 1: Unit Tests (Before pushing code)
+- [ ] Range parser utility tests
+- [ ] S3 service layer tests
+- [ ] Error handling tests
+
+### Phase 2: Endpoint Tests (Postman)
+- [ ] Health check
+- [ ] Stream info endpoint
+- [ ] Full video streaming
+- [ ] Range request variants
+- [ ] Error cases
+
+### Phase 3: Integration Tests
+- [ ] Complete user journey
+- [ ] Concurrent streaming
+- [ ] Seeking and resume
+- [ ] Rate limiting
+
+### Phase 4: Performance Tests
+- [ ] Load testing (10, 50, 100 concurrent)
+- [ ] Memory usage monitoring
+- [ ] Response time benchmarks
+- [ ] Bandwidth efficiency
+
+### Phase 5: Security Tests
+- [ ] Rate limiting enforcement
+- [ ] Invalid range handling
+- [ ] Socket timeout verification
+- [ ] CORS headers validation
+
+### Phase 6: Browser Tests
+- [ ] HTML5 video player
+- [ ] Cross-browser compatibility
+- [ ] Mobile testing
+- [ ] Adaptive quality
+
+---
+
+## 20. Success Criteria
+
+### Streaming Must Pass All Tests:
+- ✅ Stream info: < 50ms
+- ✅ First byte: < 200ms
+- ✅ Chunk stream: < 100ms
+- ✅ Seek time: < 100ms
+- ✅ Memory/stream: 10-20MB
+- ✅ Concurrent: 3 per user max
+- ✅ CPU at 100 concurrent: < 60%
+- ✅ No jitter or stuttering
+- ✅ Smooth playback throughout
+- ✅ Resume works correctly
+- ✅ Rate limiting enforced
+- ✅ All error cases handled
+
+### Test Coverage Target:
+- ✅ All 7 streaming endpoints tested
+- ✅ All Range request variants tested
+- ✅ Error cases tested
+- ✅ Performance benchmarks met
+- ✅ Security checks passed
+- ✅ Browser compatibility verified
+
+---
+
+**Last Updated**: 25 April 2026
+**Status**: Ready for comprehensive streaming testing
 
 ---
 
